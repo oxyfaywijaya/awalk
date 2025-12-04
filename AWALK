@@ -1,490 +1,300 @@
--- // Auto Walk Record Fay v2.8 CLEAN //
--- + 3 Rute Random dengan persentase rute 1 & 2 > rute 3
--- + Auto loop tanpa berhenti
+-- // Auto Walk Record Fay - SIMPLE VERSION //
+-- + 3 Rute Random dari GitHub
+-- + Auto Loop tanpa berhenti
+-- + PASTI JALAN!
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local HttpService = game:GetService("HttpService")
 
 local player = Players.LocalPlayer
-
--- === URL RUTE DARI GITHUB === --
-local routeURLs = {
-    "https://raw.githubusercontent.com/oxyfaywijaya/awalk/refs/heads/main/rute1",
-    "https://raw.githubusercontent.com/oxyfaywijaya/awalk/refs/heads/main/rute2", 
-    "https://raw.githubusercontent.com/oxyfaywijaya/awalk/refs/heads/main/rute3"
-}
-
--- === LOAD RUTE DARI GITHUB === --
-local function loadRouteFromGitHub(url)
-    local success, result = pcall(function()
-        return game:HttpGet(url)
-    end)
-    
-    if success then
-        local ok, data = pcall(function()
-            return HttpService:JSONDecode(result)
-        end)
-        if ok and #data > 0 then
-            print("✓ Loaded route with " .. #data .. " frames")
-            return data
-        else
-            warn("Failed to decode JSON atau data kosong dari: " .. url)
-        end
-    else
-        warn("Failed to fetch dari GitHub: " .. url .. " - Error: " .. tostring(result))
-    end
-    return nil
-end
-
--- === LOAD SEMUA RUTE === --
-local allRoutes = {}
-local routesLoaded = false
-
-local function loadAllRoutes()
-    allRoutes = {}
-    for i, url in ipairs(routeURLs) do
-        print("Loading route " .. i .. " from: " .. url)
-        local routeData = loadRouteFromGitHub(url)
-        if routeData then
-            table.insert(allRoutes, {
-                data = routeData,
-                name = "Rute " .. i,
-                weight = (i <= 2) and 70 or 30  -- Rute 1 & 2: 70%, Rute 3: 30%
-            })
-            print("✓ Success loaded Rute " .. i .. " (" .. #routeData .. " frames)")
-        else
-            print("✗ Failed to load Rute " .. i)
-        end
-    end
-    routesLoaded = (#allRoutes > 0)
-    print("Total routes loaded: " .. #allRoutes)
-    return routesLoaded
-end
-
--- Load rute saat startup
-loadAllRoutes()
-
--- === FUNGSI RANDOM PILIH RUTE DENGAN WEIGHT === --
-local function getRandomRoute()
-    if #allRoutes == 0 then return nil end
-    
-    -- Hitung total weight
-    local totalWeight = 0
-    for _, route in ipairs(allRoutes) do
-        totalWeight = totalWeight + route.weight
-    end
-    
-    -- Generate random number
-    local randomNum = math.random(1, totalWeight)
-    
-    -- Pilih rute berdasarkan weight
-    local cumulativeWeight = 0
-    for _, route in ipairs(allRoutes) do
-        cumulativeWeight = cumulativeWeight + route.weight
-        if randomNum <= cumulativeWeight then
-            return route
-        end
-    end
-    
-    -- Fallback ke rute pertama
-    return allRoutes[1]
-end
-
 local char = player.Character or player.CharacterAdded:Wait()
 local hrp = char:WaitForChild("HumanoidRootPart")
 local humanoid = char:WaitForChild("Humanoid")
 
---=== Variabel utama ===--
-local recording = false
-local replaying = false
-local loopReplay = true  -- Default ON untuk auto loop
-local currentRoute = nil
-local shouldStopReplay = false
+-- URL Rute
+local routeURLs = {
+    "https://raw.githubusercontent.com/oxyfaywijaya/awalk/refs/heads/main/rute1",
+    "https://raw.githubusercontent.com/oxyfaywijaya/awalk/refs/heads/main/rute2",
+    "https://raw.githubusercontent.com/oxyfaywijaya/awalk/refs/heads/main/rute3"
+}
 
-local speedPresets = {0.5, 0.75, 1, 1.1, 1.2, 1.3, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 3}
-local speedIndex = 3
-local replaySpeed = speedPresets[speedIndex]
+-- Variabel
+local allRoutes = {}
+local isReplaying = false
+local replaySpeed = 1.0
 
-local lastTime = tick()
-local recordConnection
-
---=== Record ===--
-local function startRecording()
-    if recordConnection then recordConnection:Disconnect() end
-    recordConnection = RunService.Heartbeat:Connect(function()
-        if recording then
-            local now = tick()
-            local delta = now - lastTime
-            lastTime = now
-
-            if delta >= 0.01 then
-                local cf = hrp.CFrame
-                table.insert(currentRoute.data, {
-                    cf = {cf:GetComponents()},
-                    jump = humanoid:GetState() == Enum.HumanoidStateType.Jumping,
-                    ws = humanoid.WalkSpeed,
-                    delta = delta
-                })
-            end
-        end
+-- FUNGSI SEDERHANA UNTUK LOAD RUTE
+local function loadRoute(url)
+    local success, data = pcall(function()
+        local content = game:HttpGet(url)
+        return HttpService:JSONDecode(content)
     end)
+    
+    if success and data and #data > 0 then
+        print("✓ Loaded route with " .. #data .. " frames")
+        return data
+    else
+        warn("✗ Failed to load route")
+        return nil
+    end
 end
-startRecording()
 
---=== Replay Route ===--
-local function replayRoute(routeData)
-    if not routeData or #routeData == 0 then 
-        warn("Route data kosong!")
-        return false
+-- LOAD SEMUA RUTE
+print("Loading routes from GitHub...")
+for i, url in ipairs(routeURLs) do
+    local routeData = loadRoute(url)
+    if routeData then
+        table.insert(allRoutes, {
+            data = routeData,
+            name = "Rute " .. i,
+            weight = (i <= 2) and 70 or 30  -- Rute 1&2:70%, Rute3:30%
+        })
+    end
+end
+
+print("Total routes loaded: " .. #allRoutes)
+
+-- FUNGSI PILIH RUTE RANDOM
+local function getRandomRoute()
+    if #allRoutes == 0 then return nil end
+    
+    -- Buat weighted random selection
+    local weights = {}
+    local totalWeight = 0
+    
+    for i, route in ipairs(allRoutes) do
+        weights[i] = route.weight
+        totalWeight = totalWeight + route.weight
     end
     
-    print("Starting replay dengan " .. #routeData .. " frames...")
+    local randomNum = math.random(1, totalWeight)
+    local currentWeight = 0
     
-    -- Hitung cumulative time
-    local cumulativeTime = {}
+    for i, weight in ipairs(weights) do
+        currentWeight = currentWeight + weight
+        if randomNum <= currentWeight then
+            return allRoutes[i]
+        end
+    end
+    
+    return allRoutes[1]
+end
+
+-- FUNGSI REPLAY YANG PASTI JALAN
+local function playRoute(routeData)
+    if not routeData or #routeData == 0 then return end
+    
+    print("Playing route dengan " .. #routeData .. " frames")
+    
+    local startTime = tick()
     local totalTime = 0
-    for i, frame in ipairs(routeData) do
+    
+    -- Hitung total waktu
+    for _, frame in ipairs(routeData) do
         if frame.delta then
             totalTime = totalTime + frame.delta
-            cumulativeTime[i] = totalTime
-        else
-            cumulativeTime[i] = totalTime + 0.033 -- default 30fps
-            totalTime = cumulativeTime[i]
         end
     end
     
-    local replayStart = tick()
-    local frameIndex = 1
-    local lastCFrame = hrp.CFrame
-    
-    while replaying and frameIndex <= #routeData do
-        local replayElapsed = (tick() - replayStart) * replaySpeed
+    while isReplaying and (tick() - startTime) * replaySpeed < totalTime do
+        local currentTime = (tick() - startTime) * replaySpeed
         
-        -- Skip frame yang sudah lewat
-        while frameIndex <= #routeData and cumulativeTime[frameIndex] <= replayElapsed do
-            frameIndex = frameIndex + 1
-        end
-        
-        -- Play frame saat ini
-        if frameIndex <= #routeData then
-            local frame = routeData[frameIndex]
-            if frame and frame.cf then
-                -- Apply CFrame
-                local newCF = CFrame.new(unpack(frame.cf))
-                hrp.CFrame = newCF
-                lastCFrame = newCF
-                
-                -- Apply WalkSpeed
-                if frame.ws then
-                    humanoid.WalkSpeed = frame.ws
+        -- Cari frame yang sesuai dengan waktu saat ini
+        local accumulatedTime = 0
+        for _, frame in ipairs(routeData) do
+            if frame.cf and frame.delta then
+                accumulatedTime = accumulatedTime + frame.delta
+                if currentTime <= accumulatedTime then
+                    -- Apply CFrame
+                    hrp.CFrame = CFrame.new(unpack(frame.cf))
+                    
+                    -- Apply WalkSpeed
+                    if frame.ws then
+                        humanoid.WalkSpeed = frame.ws
+                    end
+                    
+                    -- Apply Jump
+                    if frame.jump then
+                        humanoid.Jump = true
+                    end
+                    
+                    break
                 end
-                
-                -- Apply Jump
-                if frame.jump then
-                    humanoid.Jump = true
-                end
-                
-                frameIndex = frameIndex + 1
             end
-        end
-        
-        -- Keep character in place if no frames left
-        if frameIndex > #routeData then
-            hrp.CFrame = lastCFrame
         end
         
         RunService.Heartbeat:Wait()
     end
-    
-    return frameIndex > #routeData
 end
 
---=== Replay Random dengan Auto Loop === --
-local function startRandomReplayLoop()
-    if not routesLoaded or #allRoutes == 0 then
-        warn("Tidak ada rute yang tersedia!")
-        replayBtn.Text = "No Routes!"
-        task.wait(1)
-        replayBtn.Text = "Start Random Replay"
+-- FUNGSI LOOP REPLAY
+local function startReplayLoop()
+    if #allRoutes == 0 then
+        print("Tidak ada rute yang dimuat!")
         return
     end
     
-    replaying = true
-    shouldStopReplay = false
-    replayBtn.Text = "STOP Replay"
-    print("Starting random replay loop...")
+    isReplaying = true
+    print("=== STARTING REPLAY LOOP ===")
     
     task.spawn(function()
-        while replaying and not shouldStopReplay do
-            -- Pilih rute random dengan weighted probability
+        while isReplaying do
+            -- Pilih rute random
             local selectedRoute = getRandomRoute()
             
-            if selectedRoute and #selectedRoute.data > 0 then
-                -- Update UI dengan nama rute yang sedang diputar
+            if selectedRoute then
+                print("Memutar: " .. selectedRoute.name)
                 routeLabel.Text = "Playing: " .. selectedRoute.name
-                print("Memutar: " .. selectedRoute.name .. " (" .. #selectedRoute.data .. " frames)")
                 
-                -- Play rute yang dipilih
-                local completed = replayRoute(selectedRoute.data)
+                -- Mainkan rute
+                playRoute(selectedRoute.data)
                 
-                -- Delay kecil antar rute (jika masih dalam loop)
-                if replaying and not shouldStopReplay and completed then
-                    wait(0.1) -- Delay sangat kecil antar rute
+                -- Tunggu sebentar sebelum ganti rute
+                if isReplaying then
+                    wait(0.1)
                 end
-            else
-                warn("Route tidak valid atau kosong!")
-                wait(1)
             end
         end
         
-        -- Reset setelah berhenti
-        replaying = false
-        humanoid.WalkSpeed = 16
-        replayBtn.Text = "Start Random Replay"
-        routeLabel.Text = "Route: None"
         print("Replay stopped")
+        routeLabel.Text = "Stopped"
     end)
 end
 
---=== UI ===--
-local gui = Instance.new("ScreenGui", player:WaitForChild("PlayerGui"))
-gui.Name = "AutoWalkRecordUI"
+-- BUAT UI SEDERHANA
+local screenGui = Instance.new("ScreenGui", player.PlayerGui)
+screenGui.Name = "SimpleAutoWalk"
 
-local frame = Instance.new("Frame", gui)
-frame.Size = UDim2.new(0, 280, 0, 380)
-frame.Position = UDim2.new(0, 30, 0.5, -190)
-frame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
-frame.Active, frame.Draggable = true, true
+local mainFrame = Instance.new("Frame", screenGui)
+mainFrame.Size = UDim2.new(0, 250, 0, 200)
+mainFrame.Position = UDim2.new(0, 20, 0.5, -100)
+mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+mainFrame.Active = true
+mainFrame.Draggable = true
 
-local title = Instance.new("TextLabel", frame)
+local title = Instance.new("TextLabel", mainFrame)
 title.Size = UDim2.new(1, 0, 0, 30)
-title.Text = "Auto Walk Record v2.8"
+title.Text = "AUTO WALK v3.0"
+title.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
 title.TextColor3 = Color3.new(1, 1, 1)
-title.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 title.TextScaled = true
 
-local function makeBtn(text, y, height)
-    height = height or 30
-    local b = Instance.new("TextButton", frame)
-    b.Size = UDim2.new(1, -20, 0, height)
-    b.Position = UDim2.new(0, 10, 0, y)
-    b.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-    b.TextColor3 = Color3.new(1, 1, 1)
-    b.Text = text
-    b.TextScaled = true
-    return b
-end
+-- Tombol Start/Stop
+local startBtn = Instance.new("TextButton", mainFrame)
+startBtn.Size = UDim2.new(1, -20, 0, 40)
+startBtn.Position = UDim2.new(0, 10, 0, 40)
+startBtn.Text = "🚀 START REPLAY"
+startBtn.BackgroundColor3 = Color3.fromRGB(0, 170, 0)
+startBtn.TextColor3 = Color3.new(1, 1, 1)
+startBtn.TextScaled = true
 
-local recordBtn = makeBtn("Start Recording", 40)
-local replayBtn = makeBtn("START Random Replay", 80)
-local loopBtn = makeBtn("Auto Loop: ON", 120)
-
--- Label untuk menunjukkan rute yang sedang diputar
-local routeLabel = Instance.new("TextLabel", frame)
-routeLabel.Size = UDim2.new(1, -20, 0, 25)
-routeLabel.Position = UDim2.new(0, 10, 0, 155)
+-- Label Status
+routeLabel = Instance.new("TextLabel", mainFrame)
+routeLabel.Size = UDim2.new(1, -20, 0, 30)
+routeLabel.Position = UDim2.new(0, 10, 0, 90)
 routeLabel.Text = "Status: Ready"
 routeLabel.BackgroundColor3 = Color3.fromRGB(40, 40, 60)
 routeLabel.TextColor3 = Color3.new(1, 1, 1)
 routeLabel.TextScaled = true
 
--- Button untuk reload routes
-local reloadRoutesBtn = makeBtn("🔄 Reload Routes", 185, 25)
+-- Info Label
+local infoLabel = Instance.new("TextLabel", mainFrame)
+infoLabel.Size = UDim2.new(1, -20, 0, 30)
+infoLabel.Position = UDim2.new(0, 10, 0, 130)
+infoLabel.Text = "Rute: " .. #allRoutes .. " loaded"
+infoLabel.BackgroundTransparency = 1
+infoLabel.TextColor3 = Color3.new(0, 1, 0)
+infoLabel.TextScaled = true
 
-local speedLabel = Instance.new("TextLabel", frame)
-speedLabel.Size = UDim2.new(1, 0, 0, 20)
-speedLabel.Position = UDim2.new(0, 0, 0, 215)
-speedLabel.Text = ("Speed: x%.2f"):format(replaySpeed)
-speedLabel.BackgroundTransparency = 1
-speedLabel.TextColor3 = Color3.new(1,1,1)
+-- Speed Control
+local speedFrame = Instance.new("Frame", mainFrame)
+speedFrame.Size = UDim2.new(1, -20, 0, 40)
+speedFrame.Position = UDim2.new(0, 10, 0, 165)
+speedFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 
-local speedUp = makeBtn("⬆ Speed +", 235, 25)
-speedUp.Size = UDim2.new(0.5, -15, 0, 25)
+local speedMinus = Instance.new("TextButton", speedFrame)
+speedMinus.Size = UDim2.new(0.3, 0, 1, 0)
+speedMinus.Text = "⬅ SLOW"
+speedMinus.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+speedMinus.TextColor3 = Color3.new(1, 1, 1)
 
-local speedDown = makeBtn("⬇ Speed -", 235, 25)
-speedDown.Size = UDim2.new(0.5, -15, 0, 25)
-speedDown.Position = UDim2.new(0.5, 5, 0, 235)
+local speedLabel = Instance.new("TextLabel", speedFrame)
+speedLabel.Size = UDim2.new(0.4, 0, 1, 0)
+speedLabel.Position = UDim2.new(0.3, 0, 0, 0)
+speedLabel.Text = "Speed: x" .. replaySpeed
+speedLabel.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+speedLabel.TextColor3 = Color3.new(1, 1, 1)
 
-local exportBtn = makeBtn("Export JSON", 270, 25)
+local speedPlus = Instance.new("TextButton", speedFrame)
+speedPlus.Size = UDim2.new(0.3, 0, 1, 0)
+speedPlus.Position = UDim2.new(0.7, 0, 0, 0)
+speedPlus.Text = "FAST ➡"
+speedPlus.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+speedPlus.TextColor3 = Color3.new(1, 1, 1)
 
-local importBox = Instance.new("TextBox", frame)
-importBox.Size = UDim2.new(1, -20, 0, 30)
-importBox.Position = UDim2.new(0, 10, 0, 310)
-importBox.PlaceholderText = "Paste JSON + Enter"
-importBox.BackgroundColor3 = Color3.fromRGB(40, 40, 80)
-importBox.TextColor3 = Color3.new(1, 1, 1)
-importBox.ClearTextOnFocus = false
-
--- Status label
-local statusLabel = Instance.new("TextLabel", frame)
-statusLabel.Size = UDim2.new(1, -20, 0, 20)
-statusLabel.Position = UDim2.new(0, 10, 0, 350)
-statusLabel.Text = "Routes: " .. #allRoutes .. " loaded"
-statusLabel.BackgroundTransparency = 1
-statusLabel.TextColor3 = Color3.new(0, 1, 0)
-statusLabel.TextScaled = true
-
---=== Buttons ===--
-recordBtn.MouseButton1Click:Connect(function()
-    recording = not recording
-    if recording then
-        -- Buat rute baru untuk recording
-        currentRoute = {
-            data = {},
-            name = "Recording",
-            weight = 50
-        }
-        lastTime = tick()
-        recordBtn.Text = "⏺ STOP Recording"
-        routeLabel.Text = "Recording..."
-        statusLabel.Text = "Recording in progress..."
-    else
-        recordBtn.Text = "Start Recording"
-        routeLabel.Text = "Ready"
-        statusLabel.Text = "Routes: " .. #allRoutes .. " loaded"
-    end
-end)
-
-replayBtn.MouseButton1Click:Connect(function()
-    if replaying then
-        shouldStopReplay = true
-        replaying = false
-        humanoid.WalkSpeed = 16
-        replayBtn.Text = "START Random Replay"
+-- EVENT HANDLERS
+startBtn.MouseButton1Click:Connect(function()
+    if isReplaying then
+        isReplaying = false
+        startBtn.Text = "🚀 START REPLAY"
+        startBtn.BackgroundColor3 = Color3.fromRGB(0, 170, 0)
         routeLabel.Text = "Stopped"
-        statusLabel.Text = "Routes: " .. #allRoutes .. " loaded"
+        humanoid.WalkSpeed = 16
     else
-        if not routesLoaded or #allRoutes == 0 then
-            -- Coba load ulang jika belum ada rute
-            routeLabel.Text = "Loading routes..."
-            loadAllRoutes()
-            if not routesLoaded then
-                routeLabel.Text = "No routes loaded!"
-                statusLabel.Text = "Failed to load routes!"
-                task.wait(1)
-                replayBtn.Text = "START Random Replay"
-                routeLabel.Text = "Ready"
-                statusLabel.Text = "Routes: " .. #allRoutes .. " loaded"
-                return
+        if #allRoutes == 0 then
+            -- Coba load ulang
+            print("Reloading routes...")
+            allRoutes = {}
+            for i, url in ipairs(routeURLs) do
+                local routeData = loadRoute(url)
+                if routeData then
+                    table.insert(allRoutes, {
+                        data = routeData,
+                        name = "Rute " .. i,
+                        weight = (i <= 2) and 70 or 30
+                    })
+                end
             end
+            infoLabel.Text = "Rute: " .. #allRoutes .. " loaded"
         end
-        startRandomReplayLoop()
-        statusLabel.Text = "Replaying... (" .. #allRoutes .. " routes)"
-    end
-end)
-
-loopBtn.MouseButton1Click:Connect(function()
-    loopReplay = not loopReplay
-    loopBtn.Text = "Auto Loop: " .. (loopReplay and "ON" or "OFF")
-    print("Auto Loop: " .. (loopReplay and "ENABLED" : "DISABLED"))
-end)
-
-speedUp.MouseButton1Click:Connect(function()
-    speedIndex = math.min(speedIndex + 1, #speedPresets)
-    replaySpeed = speedPresets[speedIndex]
-    speedLabel.Text = ("Speed: x%.2f"):format(replaySpeed)
-end)
-
-speedDown.MouseButton1Click:Connect(function()
-    speedIndex = math.max(speedIndex - 1, 1)
-    replaySpeed = speedPresets[speedIndex]
-    speedLabel.Text = ("Speed: x%.2f"):format(replaySpeed)
-end)
-
-reloadRoutesBtn.MouseButton1Click:Connect(function()
-    reloadRoutesBtn.Text = "Loading..."
-    routeLabel.Text = "Reloading..."
-    
-    local success = loadAllRoutes()
-    
-    if success and #allRoutes > 0 then
-        reloadRoutesBtn.Text = "✓ " .. #allRoutes .. " routes!"
-        routeLabel.Text = "Ready"
-        statusLabel.Text = "Routes: " .. #allRoutes .. " loaded"
-        task.delay(1.5, function() 
-            reloadRoutesBtn.Text = "🔄 Reload Routes" 
-        end)
-    else
-        reloadRoutesBtn.Text = "✗ Failed!"
-        routeLabel.Text = "Load failed"
-        statusLabel.Text = "No routes loaded!"
-        task.delay(1.5, function() 
-            reloadRoutesBtn.Text = "🔄 Reload Routes" 
-        end)
-    end
-end)
-
-local function safeCopy(str)
-    if setclipboard then 
-        setclipboard(str)
-        return true
-    end
-    return false
-end
-
-exportBtn.MouseButton1Click:Connect(function()
-    if currentRoute and #currentRoute.data > 0 then
-        local jsonStr = HttpService:JSONEncode(currentRoute.data)
-        if safeCopy(jsonStr) then
-            exportBtn.Text = "✓ Copied!"
+        
+        if #allRoutes > 0 then
+            isReplaying = true
+            startBtn.Text = "⏹ STOP REPLAY"
+            startBtn.BackgroundColor3 = Color3.fromRGB(170, 0, 0)
+            startReplayLoop()
         else
-            exportBtn.Text = "Copy failed!"
+            routeLabel.Text = "No routes loaded!"
         end
-        task.delay(1.5, function() exportBtn.Text = "Export JSON" end)
-    else
-        exportBtn.Text = "No data!"
-        task.delay(1, function() exportBtn.Text = "Export JSON" end)
     end
 end)
 
-importBox.FocusLost:Connect(function(enterPressed)
-    if enterPressed then
-        local txt = importBox.Text
-        if txt and #txt > 10 then
-            local ok, data = pcall(function() 
-                return HttpService:JSONDecode(txt) 
-            end)
-            
-            if ok and data and #data > 0 then 
-                -- Simpan sebagai rute baru
-                table.insert(allRoutes, {
-                    data = data,
-                    name = "Imported Route",
-                    weight = 50
-                })
-                routesLoaded = true
-                importBox.Text = "✓ Imported!"
-                statusLabel.Text = "Routes: " .. #allRoutes .. " loaded"
-            else 
-                importBox.Text = "✗ Invalid JSON!" 
-            end
-        else
-            importBox.Text = "✗ Text too short!"
-        end
-        task.delay(1.5, function() importBox.Text = "" end)
-    end
+speedMinus.MouseButton1Click:Connect(function()
+    replaySpeed = math.max(0.25, replaySpeed - 0.25)
+    speedLabel.Text = "Speed: x" .. replaySpeed
 end)
 
--- Auto start replay ketika game dimulai (jika ada rute)
-task.wait(2) -- Tunggu sedikit agar semua terload
+speedPlus.MouseButton1Click:Connect(function()
+    replaySpeed = math.min(3.0, replaySpeed + 0.25)
+    speedLabel.Text = "Speed: x" .. replaySpeed
+end)
 
-if loopReplay then
-    print("Auto starting replay...")
-    if routesLoaded and #allRoutes > 0 then
-        print("Starting auto replay dengan " .. #allRoutes .. " routes")
-        task.wait(0.5)
-        startRandomReplayLoop()
-    else
-        warn("Tidak ada rute untuk auto start")
+-- AUTO START (jika ada rute)
+task.wait(1)
+if #allRoutes > 0 then
+    print("Auto starting replay in 2 seconds...")
+    task.wait(2)
+    if not isReplaying then
+        isReplaying = true
+        startBtn.Text = "⏹ STOP REPLAY"
+        startBtn.BackgroundColor3 = Color3.fromRGB(170, 0, 0)
+        startReplayLoop()
     end
 end
 
-print("=========================================")
-print("Auto Walk Record Fay v2.8 - Random Routes")
+print("========================================")
+print("AUTO WALK READY!")
 print("Loaded " .. #allRoutes .. " routes")
-print("Rute 1 & 2: 70% chance")
-print("Rute 3: 30% chance") 
-print("Auto Loop: " .. (loopReplay and "ENABLED" : "DISABLED"))
-print("Press 'Start Random Replay' to begin!")
-print("=========================================")
+print("Press the button to start/stop")
+print("========================================")
